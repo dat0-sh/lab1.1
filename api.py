@@ -1,17 +1,19 @@
-from parse import parse, Result, Match
+import inspect
 
-
+from parse import parse
 from webob import Request, Response
 
 
+from exceptions.routing import DuplicateRouteFound, MethodIsNotAllowed
+
+
 class API:
-    def __init__(self):
+    def __init__(self) -> None:
         self.routes = {}
 
     def __call__(self, environ, start_response):
         request = Request(environ)
-        handler = self._handle_request(request)
-        return handler(environ, start_response)
+        return self._handle_request(request)(environ, start_response)
 
     def _find_handler(self, request_path):
         for path, handler in self.routes.items():
@@ -25,6 +27,12 @@ class API:
         handler, kwargs = self._find_handler(request.path)
         if handler:
             handler(request, response, **kwargs)
+            if inspect.isclass(handler):
+                handler = getattr(handler(), request.method.lower())
+                if not handler:
+                    raise MethodIsNotAllowed(f"{request.method} is not allowed for this route")
+
+            handler(request, response)
         else:
             response.status_code = 404
             response.text = "Not found"
@@ -32,7 +40,8 @@ class API:
 
     def route(self, path):
         def wrapper(handler):
+            if _handler := self.routes.get(path):
+                raise DuplicateRouteFound(f"Route {path} is already handled by {_handler.__name__}")
             self.routes[path] = handler
             return handler
-
         return wrapper
